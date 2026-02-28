@@ -296,12 +296,81 @@ export async function boot() {
 	if (extensionlist.length) {
 		_status.extensionLoading = [];
 		_status.extensionLoaded = [];
-		for (const i of extensionlist) {
-			await importExtension(i);
+
+		// 获取扩展依赖项
+		const unloaded: Set<string> = new Set(extensionlist);
+		const deps = new Map<string, Map<string, string>>();
+		const optDeps = new Map<string, Map<string, string>>();
+		// TODO: 先实现大概框架，等具体的依赖API确定后再完善
+		for (const ext of extensionlist) {
+			deps.set(ext, new Map());
+			optDeps.set(ext, new Map());
 		}
-		if (_status.extensionLoading) {
-			await Promise.all(_status.extensionLoading);
+
+		let onlyDeps = false;
+		while (unloaded.size > 0) {
+			// 获取0依赖扩展
+			const loadingQueue: string[] = [];
+			for (const ext of unloaded) {
+				let bool1 = deps.get(ext)!.size === 0;
+				// 如果到了只有可选依赖未满足的阶段，允许可选依赖未满足的扩展加载
+				// TODO: 此处可能存在循环可选依赖，虽然最终都会加载，但可能会导致加载顺序不稳定，从而
+				//       导致某些扩展的可选功能无法使用，且后续实现报错提示会误以为是循环依赖导致无法正常加载扩展，
+				//       纵使确实可能存在无法正常运行扩展的情况
+				//       总之先懒了再说
+				let bool2 = onlyDeps || optDeps.get(ext)!.size === 0;
+				if (bool1 && bool2) {
+					loadingQueue.push(ext);
+				}
+			}
+			// 如果不存在0依赖扩展
+			if (loadingQueue.length === 0) {
+				// 如果还没到只有可选依赖未满足的阶段，则进入只有可选依赖未满足的阶段，
+				// 反之则说明存在循环依赖或缺少依赖，无法继续加载
+				if (onlyDeps) {
+					break;
+				} else {
+					onlyDeps = true;
+					continue;
+				}
+			}
+
+			// 加载0依赖扩展
+			_status.extensionLoading.length = 0;
+			for (const ext of loadingQueue) {
+				const promise = importExtension(ext);
+				_status.extensionLoading.push(promise);
+			}
+			// TODO: 检测扩展加载错误
+			await Promise.allSettled(_status.extensionLoading);
+
+			// 删除已加载的扩展，并更新依赖表
+			// TODO: 检测扩展版本
+			for (const ext of loadingQueue) {
+				unloaded.delete(ext);
+				deps.delete(ext);
+				if (!onlyDeps || optDeps.get(ext)!.size === 0) {
+					optDeps.delete(ext);
+				}
+				
+				for (const [_, dep] of deps) {
+					dep.delete(ext);
+				}
+				for (const [_, dep] of optDeps) {
+					dep.delete(ext);
+				}
+			}
 		}
+
+		// 处理只有可选依赖未满足的扩展
+		// TODO: 处理未加载的扩展，可能是循环依赖，也可能是缺少依赖
+
+		// for (const i of extensionlist) {
+		// 	await importExtension(i);
+		// }
+		// if (_status.extensionLoading) {
+		// 	await Promise.all(_status.extensionLoading);
+		// }
 		delete _status.extensionLoading;
 	}
 
